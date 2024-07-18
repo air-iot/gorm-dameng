@@ -126,7 +126,8 @@ WHERE TABS.SCHID = SCHEMAS.ID AND SF_CHECK_PRIV_OPT(UID(), CURRENT_USERTYPE(), T
 
 	var count int64
 	_ = m.RunWithValue(value, func(stmt *gorm.Statement) error {
-		return m.DB.Raw(tableSql, m.CurrentDatabase(), stmt.Table).Row().Scan(&count)
+		currentSchema, curTable := CurrentSchema(stmt, stmt.Table)
+		return m.DB.Raw(tableSql, currentSchema, curTable).Row().Scan(&count)
 	})
 	return count > 0
 }
@@ -144,6 +145,7 @@ AND ((SUBTYPE$ ='UTAB' AND CAST((INFO3 & 0x00FF & 0x003F) AS INT) not in (9, 27,
 OR SUBTYPE$ in ('STAB', 'VIEW', 'SYNOM'))) TABS
 WHERE TABS.SCHID = SCHEMAS.ID AND SF_CHECK_PRIV_OPT(UID(), CURRENT_USERTYPE(), TABS.ID, SCHEMAS.PID, -1, TABS.ID) = 1;`
 
+	//currentSchema, _ := CurrentSchema(stmt, stmt.Table)
 	err = m.DB.Raw(tableSql, m.CurrentDatabase()).Scan(&tableList).Error
 	return
 }
@@ -161,10 +163,12 @@ func (m Migrator) DropColumn(dst interface{}, field string) error {
 //goland:noinspection SqlNoDataSourceInspection
 func (m Migrator) AlterColumn(value interface{}, field string) error {
 	return m.RunWithValue(value, func(stmt *gorm.Statement) error {
+		currentSchema, table := CurrentSchema(stmt, stmt.Table)
 		if field := stmt.Schema.LookUpField(field); field != nil {
 			return m.DB.Exec(
 				"ALTER TABLE ? MODIFY ? ?",
-				clause.Table{Name: stmt.Table},
+				//clause.Table{Name: stmt.Table},
+				clause.Table{Name: GetTableName(currentSchema, table)},
 				clause.Column{Name: field.DBName},
 				m.FullDataTypeOf(field),
 			).Error
@@ -183,9 +187,11 @@ func (m Migrator) alterColumn(value interface{}, field string, containsUnique bo
 			if containsUnique && field.Unique {
 				typeof.SQL = strings.Replace(typeof.SQL, " UNIQUE", "", 1)
 			}
+			currentSchema, curTable := CurrentSchema(stmt, stmt.Table)
 			return m.DB.Exec(
 				"ALTER TABLE ? MODIFY ? ?",
-				clause.Table{Name: stmt.Table},
+				//clause.Table{Name: fmt.Sprintf("%s.%s", currentSchema, curTable)},
+				clause.Table{Name: GetTableName(currentSchema, curTable)},
 				clause.Column{Name: field.DBName},
 				typeof,
 			).Error
@@ -315,7 +321,9 @@ WHERE TABS.ID = COLS.ID AND SCHS.ID = TABS.SCHID;`
 
 	var count int64
 	_ = m.RunWithValue(value, func(stmt *gorm.Statement) error {
-		return m.DB.Raw(columnSql, m.CurrentDatabase(), stmt.Table, field).Row().Scan(&count)
+		currentSchema, table := CurrentSchema(stmt, stmt.Table)
+		//return m.DB.Raw(columnSql, m.CurrentDatabase(), stmt.Table, field).Row().Scan(&count)
+		return m.DB.Raw(columnSql, currentSchema, table, field).Row().Scan(&count)
 	})
 	return count > 0
 }
@@ -329,9 +337,10 @@ func (m Migrator) ColumnTypes(dst interface{}) ([]gorm.ColumnType, error) {
 	columnTypes := make([]gorm.ColumnType, 0)
 	execErr := m.RunWithValue(dst, func(stmt *gorm.Statement) error {
 		var (
-			currentDatabase = m.CurrentDatabase()
-			table           = stmt.Table
-			columnTypeSQL   = `SELECT /*+ MAX_OPT_N_TABLES(5) */ COLS.NAME, COLS.DEFVAL FROM
+			//currentDatabase = m.CurrentDatabase()
+			//table           = stmt.Table
+			currentSchema, table = CurrentSchema(stmt, stmt.Table)
+			columnTypeSQL        = `SELECT /*+ MAX_OPT_N_TABLES(5) */ COLS.NAME, COLS.DEFVAL FROM
 (SELECT ID FROM SYS.SYSOBJECTS WHERE TYPE$ = 'SCH' AND NAME = ?) SCHS,
 (SELECT ID, SCHID FROM SYS.SYSOBJECTS WHERE TYPE$ = 'SCHOBJ' AND SUBTYPE$ IN ('UTAB', 'STAB', 'VIEW') AND NAME = ?) TABS,
 SYS.SYSCOLUMNS COLS
@@ -344,7 +353,7 @@ SYS.SYSCONS CONS,
 SYS.SYSINDEXES INDS
 WHERE SCHS.ID=TABS.SCHID AND TABS.ID=COLS.ID AND COLS.ID=CONS.TABLEID and CONS.INDEXID=INDS.ID and SF_COL_IS_IDX_KEY(INDS.KEYNUM, INDS.KEYINFO, COLS.COLID)=1`
 			consMap   = make(map[string][][]bool)
-			rows, err = m.DB.Session(&gorm.Session{}).Table(stmt.Table).Limit(1).Rows()
+			rows, err = m.DB.Session(&gorm.Session{}).Table(GetTableName(currentSchema, table)).Limit(1).Rows()
 		)
 
 		if err != nil {
@@ -358,7 +367,7 @@ WHERE SCHS.ID=TABS.SCHID AND TABS.ID=COLS.ID AND COLS.ID=CONS.TABLEID and CONS.I
 		}
 
 		// 约束
-		cons, consErr := m.DB.Table(table).Raw(columnConsSQL, currentDatabase, table).Rows()
+		cons, consErr := m.DB.Table(GetTableName(currentSchema, table)).Raw(columnConsSQL, currentSchema, table).Rows()
 		if consErr != nil {
 			return consErr
 		}
@@ -382,7 +391,7 @@ WHERE SCHS.ID=TABS.SCHID AND TABS.ID=COLS.ID AND COLS.ID=CONS.TABLEID and CONS.I
 		}
 
 		// 列信息
-		columns, rowErr := m.DB.Table(table).Raw(columnTypeSQL, currentDatabase, table).Rows()
+		columns, rowErr := m.DB.Table(GetTableName(currentSchema, table)).Raw(columnTypeSQL, currentSchema, table).Rows()
 		if rowErr != nil {
 			return rowErr
 		}
@@ -476,7 +485,9 @@ where CON_OBJ.ID=CONS.ID and TAB_OBJ.ID=CONS.TABLEID and TAB_OBJ.SCHID=SCH_OBJ.I
 			name = c.Name
 		default:
 		}
-		return m.DB.Raw(conSql, m.CurrentDatabase(), name).Row().Scan(&count)
+		currentSchema, _ := CurrentSchema(stmt, stmt.Table)
+		//return m.DB.Raw(conSql, m.CurrentDatabase(), name).Row().Scan(&count)
+		return m.DB.Raw(conSql, currentSchema, name).Row().Scan(&count)
 	})
 	return count > 0
 }
@@ -512,7 +523,9 @@ WHERE TAB.ID = COLS.ID AND TAB.ID = OBJ_INDS.TABLEID AND COLS.COLID = OBJ_INDS.C
 		if idx := stmt.Schema.LookIndex(name); idx != nil {
 			name = idx.Name
 		}
-		return m.DB.Raw(indexSql, m.CurrentDatabase(), stmt.Schema.Table, name, name).Row().Scan(&count)
+		currentSchema, table := CurrentSchema(stmt, stmt.Schema.Table)
+		//return m.DB.Raw(indexSql, m.CurrentDatabase(), stmt.Schema.Table, name, name).Row().Scan(&count)
+		return m.DB.Raw(indexSql, currentSchema, table, name, name).Row().Scan(&count)
 	})
 	return count > 0
 }
@@ -541,7 +554,8 @@ TAB.ID = COLS.ID AND TAB.ID = OBJ_INDS.TABLEID AND COLS.COLID = OBJ_INDS.COLID A
 	indexes := make([]gorm.Index, 0)
 	err := m.RunWithValue(value, func(stmt *gorm.Statement) error {
 		result := make([]*Index, 0)
-		if scanErr := m.DB.Raw(indexSql, m.CurrentDatabase(), stmt.Table).Scan(&result).Error; scanErr != nil {
+		currentSchema, table := CurrentSchema(stmt, stmt.Table)
+		if scanErr := m.DB.Raw(indexSql, currentSchema, table).Scan(&result).Error; scanErr != nil {
 			return scanErr
 		}
 		indexMap := groupByIndexName(result)

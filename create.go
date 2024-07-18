@@ -72,7 +72,9 @@ func Create(db *gorm.DB) {
 					if setIdentityInsert && !db.DryRun && db.Error == nil {
 						db.Statement.SQL.Reset()
 						_, _ = db.Statement.WriteString("SET IDENTITY_INSERT ")
-						db.Statement.WriteQuoted(db.Statement.Table)
+						stmt := db.Statement
+						currentSchema, table := CurrentSchema(stmt, stmt.Table)
+						db.Statement.WriteQuoted(GetTableName(currentSchema, table))
 						_, _ = db.Statement.WriteString(" ON;")
 						_, err := db.Statement.ConnPool.ExecContext(db.Statement.Context, db.Statement.SQL.String(), db.Statement.Vars...)
 						if db.AddError(err) != nil {
@@ -81,7 +83,7 @@ func Create(db *gorm.DB) {
 						defer func() {
 							db.Statement.SQL.Reset()
 							_, _ = db.Statement.WriteString("SET IDENTITY_INSERT ")
-							db.Statement.WriteQuoted(db.Statement.Table)
+							db.Statement.WriteQuoted(GetTableName(currentSchema, table))
 							_, _ = db.Statement.WriteString(" OFF;")
 							_, _ = db.Statement.ConnPool.ExecContext(db.Statement.Context, db.Statement.SQL.String(), db.Statement.Vars...)
 						}()
@@ -211,7 +213,10 @@ func Create(db *gorm.DB) {
 
 func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values) {
 	_, _ = db.Statement.WriteString("MERGE INTO ")
-	db.Statement.WriteQuoted(db.Statement.Table)
+	stmt := db.Statement
+	currentSchema, table := CurrentSchema(stmt, stmt.Table)
+	db.Statement.WriteQuoted(GetTableName(currentSchema, table))
+	//db.Statement.WriteQuoted(db.Statement.Table)
 	_, _ = db.Statement.WriteString(" USING (")
 	for idx, value := range values.Values {
 		if idx > 0 {
@@ -235,8 +240,9 @@ func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values
 	var where clause.Where
 	for _, field := range db.Statement.Schema.PrimaryFields {
 		where.Exprs = append(where.Exprs, clause.Eq{
-			Column: clause.Column{Table: db.Statement.Table, Name: field.DBName},
-			Value:  clause.Column{Table: "excluded", Name: field.DBName},
+			Column: clause.Column{Table: GetTableName(currentSchema, table), Name: field.DBName},
+			//Column: clause.Column{Table: db.Statement.Table, Name: field.DBName},
+			Value: clause.Column{Table: "excluded", Name: field.DBName},
 		})
 	}
 	where.Build(db.Statement)
@@ -298,7 +304,8 @@ func MergeCreate(db *gorm.DB, onConflict clause.OnConflict, values clause.Values
 		_, _ = db.Statement.WriteString("SELECT ")
 		db.Statement.WriteQuoted(db.Statement.Schema.PrioritizedPrimaryField.DBName)
 		_, _ = db.Statement.WriteString(" FROM ")
-		db.Statement.WriteQuoted(db.Statement.Table)
+		//db.Statement.WriteQuoted(db.Statement.Table)
+		db.Statement.WriteQuoted(GetTableName(currentSchema, table))
 		_, _ = db.Statement.WriteString(" ORDER BY ")
 		db.Statement.WriteQuoted(db.Statement.Schema.PrioritizedPrimaryField.DBName)
 		_, _ = db.Statement.WriteString(" DESC LIMIT 1;")
