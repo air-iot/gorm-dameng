@@ -269,6 +269,10 @@ func (d Dialector) getSchemaBytesType(field *schema.Field) string {
 
 func (d Dialector) getSchemaCustomType(field *schema.Field) string {
 	sqlType := string(field.DataType)
+	if sqlType == "json" || sqlType == "jsonb" {
+		//sqlType = fmt.Sprintf(`TEXT CONSTRAINT JSON_CHECK CHECK("%s" IS JSON)`, field.DBName)
+		sqlType = "TEXT"
+	}
 
 	if field.AutoIncrement && !strings.Contains(strings.ToLower(sqlType), " auto_increment") && !strings.Contains(strings.ToLower(sqlType), " identity") {
 		sqlType += " IDENTITY(1,1)"
