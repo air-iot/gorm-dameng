@@ -239,7 +239,8 @@ func (d Dialector) getSchemaStringType(field *schema.Field) string {
 		if d.VarcharSizeIsCharLength {
 			return "VARCHAR(8188 CHAR)" // 字符长度（8188 * 4）
 		}
-		return "VARCHAR" // 如果未指定长度，缺省为 8188 字节
+		//return "VARCHAR" // 如果未指定长度，缺省为 8188 字节
+		return "TEXT"
 	} else if size < 0 || size >= 32768 {
 		return "CLOB" // 长度超过 32767，使用 CLOB（TEXT）
 	} else {

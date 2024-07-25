@@ -2,6 +2,7 @@ package dameng
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -494,7 +495,40 @@ where CON_OBJ.ID=CONS.ID and TAB_OBJ.ID=CONS.TABLEID and TAB_OBJ.SCHID=SCH_OBJ.I
 
 func (m Migrator) CreateIndex(dst interface{}, name string) error {
 	// super
-	return m.Migrator.CreateIndex(dst, name)
+	//return m.Migrator.CreateIndex(dst, name)
+	return m.RunWithValue(dst, func(stmt *gorm.Statement) error {
+		if stmt.Schema == nil {
+			return errors.New("failed to get schema")
+		}
+		if idx := stmt.Schema.LookIndex(name); idx != nil {
+			//opts := m.BuildIndexOptions(idx.Fields, stmt)
+			opts := m.DB.Migrator().(migrator.BuildIndexOptionsInterface).BuildIndexOptions(idx.Fields, stmt)
+			idxName := GetIndexName(stmt.Table, idx.Name)
+			values := []interface{}{clause.Column{Name: idxName}, m.CurrentTable(stmt), opts}
+
+			createIndexSQL := "CREATE "
+			if idx.Class != "" {
+				createIndexSQL += idx.Class + " "
+			}
+			createIndexSQL += "INDEX ? ON ??"
+
+			if idx.Type != "" {
+				createIndexSQL += " USING " + idx.Type
+			}
+
+			if idx.Comment != "" {
+				createIndexSQL += fmt.Sprintf(" COMMENT '%s'", idx.Comment)
+			}
+
+			if idx.Option != "" {
+				createIndexSQL += " " + idx.Option
+			}
+
+			return m.DB.Exec(createIndexSQL, values...).Error
+		}
+
+		return fmt.Errorf("failed to create index with name %s", name)
+	})
 }
 
 func (m Migrator) DropIndex(value interface{}, name string) error {
@@ -502,7 +536,7 @@ func (m Migrator) DropIndex(value interface{}, name string) error {
 		if idx := stmt.Schema.LookIndex(name); idx != nil {
 			name = idx.Name
 		}
-
+		name = GetIndexName(stmt.Table, name)
 		return m.DB.Exec("DROP INDEX ?", clause.Column{Name: name}).Error
 	})
 }
@@ -525,6 +559,7 @@ WHERE TAB.ID = COLS.ID AND TAB.ID = OBJ_INDS.TABLEID AND COLS.COLID = OBJ_INDS.C
 		}
 		currentSchema, table := CurrentSchema(stmt, stmt.Schema.Table)
 		//return m.DB.Raw(indexSql, m.CurrentDatabase(), stmt.Schema.Table, name, name).Row().Scan(&count)
+		name = GetIndexName(table, name)
 		return m.DB.Raw(indexSql, currentSchema, table, name, name).Row().Scan(&count)
 	})
 	return count > 0

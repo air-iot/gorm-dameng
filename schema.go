@@ -26,3 +26,7 @@ func CurrentSchema(stmt *gorm.Statement, table string) (interface{}, interface{}
 func GetTableName(schema, tableName interface{}) string {
 	return fmt.Sprintf("%v.%v", schema, tableName)
 }
+
+func GetIndexName(table interface{}, name string) string {
+	return fmt.Sprintf("%v_%s", table, name)
+}
